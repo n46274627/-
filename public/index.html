@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>מי מסתתר מאחורי השם?</title>
+  <style>
+    :root { color-scheme: dark; --bg:#101323; --panel:#1a2038; --line:#303957; --accent:#8b7cff; --muted:#aab2ca; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Arial,sans-serif; background:radial-gradient(circle at top,#25234b,var(--bg) 55%); color:#f5f6ff; min-height:100vh; }
+    .wrap { width:min(1050px,94%); margin:30px auto; }
+    header { text-align:center; margin-bottom:24px; }
+    h1 { margin:0 0 8px; font-size:clamp(28px,5vw,42px); }
+    .sub { color:var(--muted); }
+    .panel { background:rgba(26,32,56,.96); border:1px solid var(--line); border-radius:18px; padding:20px; margin:14px 0; box-shadow:0 12px 35px #0003; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }
+    label { display:block; color:var(--muted); font-size:14px; margin:10px 0 6px; }
+    input,button { font:inherit; border-radius:10px; padding:12px; border:1px solid var(--line); }
+    input { width:100%; color:white; background:#11172a; }
+    button { cursor:pointer; color:white; background:var(--accent); border:0; font-weight:bold; }
+    button.secondary { background:#303957; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .row input { flex:1; min-width:150px; }
+    .hidden { display:none !important; }
+    .muted { color:var(--muted); }
+    .code { font-size:28px; letter-spacing:5px; font-weight:bold; color:#c6beff; }
+    .players { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:9px; }
+    .player { background:#11172a; border:1px solid var(--line); border-radius:12px; padding:12px; }
+    .player strong { display:block; margin-bottom:5px; }
+    .chat { height:260px; overflow:auto; background:#101629; border-radius:12px; padding:12px; margin:10px 0; }
+    .msg { padding:7px 0; border-bottom:1px solid #29314b; overflow-wrap:anywhere; }
+    .system { color:#c6beff; font-style:italic; }
+    .msg b { color:#c6beff; }
+    .status { display:inline-block; border-radius:20px; padding:5px 10px; background:#303957; color:#d9d5ff; font-size:13px; }
+    .error { color:#ffaaaa; min-height:22px; margin-top:8px; }
+    .success { color:#9ce6bb; }
+    .reveal-item { padding:9px; background:#11172a; border-radius:10px; margin:7px 0; }
+    footer { text-align:center; color:var(--muted); font-size:12px; padding:20px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎭 מי מסתתר מאחורי השם?</h1>
+    <div class="sub">בחרו זהות בדויה, דברו, חשדו ונסו לגלות מי זה מי.</div>
+  </header>
+
+  <section id="entry" class="panel">
+    <h2>כניסה למשחק</h2>
+    <p class="muted">השם האמיתי נשמר בשרת ולא מוצג לשאר השחקנים עד לחשיפה בסוף.</p>
+    <div class="grid">
+      <div>
+        <label for="realName">השם האמיתי שלך (לצורך המשחק)</label>
+        <input id="realName" maxlength="32" placeholder="למשל: דניאל">
+        <label for="alias">השם הבדוי שלך</label>
+        <input id="alias" maxlength="24" placeholder="למשל: הנינג'ה הסגול">
+        <div class="row" style="margin-top:14px">
+          <button id="createBtn">יצירת חדר חדש</button>
+        </div>
+      </div>
+      <div>
+        <label for="roomCode">קוד חדר שקיבלת</label>
+        <input id="roomCode" maxlength="5" placeholder="ABCDE">
+        <div class="row" style="margin-top:14px">
+          <button id="joinBtn" class="secondary">הצטרפות לחדר</button>
+        </div>
+      </div>
+    </div>
+    <div id="entryError" class="error"></div>
+  </section>
+
+  <main id="game" class="hidden">
+    <section class="panel">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <div class="muted">קוד החדר — שלחו אותו לחברים</div>
+          <div id="codeDisplay" class="code"></div>
+        </div>
+        <span id="status" class="status">ממתינים לשחקנים</span>
+      </div>
+      <h2>שחקנים בחדר</h2>
+      <div id="players" class="players"></div>
+      <p id="hostNote" class="muted"></p>
+      <div class="row">
+        <button id="startBtn">התחלת המשחק</button>
+        <button id="revealBtn" class="secondary hidden">סיום וחשיפת זהויות</button>
+      </div>
+      <div id="gameError" class="error"></div>
+    </section>
+
+    <section id="playArea" class="panel hidden">
+      <h2>💬 חדר הדיונים</h2>
+      <div id="chat" class="chat"></div>
+      <div class="row">
+        <input id="chatInput" maxlength="240" placeholder="כתוב הודעה לכולם...">
+        <button id="sendBtn">שליחה</button>
+      </div>
+      <h2>🕵️ נסה לגלות זהות</h2>
+      <div class="grid">
+        <div>
+          <label for="target">את מי אתה רוצה לחשוף?</label>
+          <select id="target" style="width:100%;padding:12px;border-radius:10px;background:#11172a;color:white;border:1px solid #303957"></select>
+        </div>
+        <div>
+          <label for="guessInput">מה השם האמיתי שלו?</label>
+          <input id="guessInput" maxlength="32" placeholder="הקלד את הניחוש">
+        </div>
+      </div>
+      <button id="guessBtn" style="margin-top:12px">בדיקת ניחוש</button>
+      <div id="guessResult" class="error"></div>
+    </section>
+
+    <section id="revealArea" class="panel hidden">
+      <h2>🎉 כל הזהויות נחשפו!</h2>
+      <div id="revealList"></div>
+    </section>
+  </main>
+  <footer>אב־טיפוס ראשוני. חדרים נשמרים בזיכרון השרת ונמחקים כשהשרת נכבה.</footer>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+  let myRoom = "";
+  let latestState = null;
+
+  const $ = id => document.getElementById(id);
+  const showError = (id, message) => { $(id).textContent = message || ""; };
+
+  function credentials() {
+    return {
+      realName: $("realName").value.trim(),
+      alias: $("alias").value.trim()
+    };
+  }
+
+  function enterSuccess(code) {
+    myRoom = code;
+    $("entry").classList.add("hidden");
+    $("game").classList.remove("hidden");
+    $("codeDisplay").textContent = code;
+  }
+
+  $("createBtn").onclick = () => {
+    showError("entryError", "");
+    socket.emit("createRoom", credentials(), result => {
+      if (result.error) return showError("entryError", result.error);
+      enterSuccess(result.code);
+    });
+  };
+
+  $("joinBtn").onclick = () => {
+    showError("entryError", "");
+    socket.emit("joinRoom", {
+      ...credentials(),
+      code: $("roomCode").value.trim().toUpperCase()
+    }, result => {
+      if (result.error) return showError("entryError", result.error);
+      enterSuccess(result.code);
+    });
+  };
+
+  $("startBtn").onclick = () => {
+    socket.emit("startGame", result => {
+      if (result?.error) showError("gameError", result.error);
+    });
+  };
+
+  $("revealBtn").onclick = () => {
+    if (!confirm("לסיים את המשחק ולחשוף את כל הזהויות?")) return;
+    socket.emit("reveal", result => {
+      if (result?.error) showError("gameError", result.error);
+    });
+  };
+
+  function sendChat() {
+    const text = $("chatInput").value.trim();
+    if (!text) return;
+    socket.emit("chat", { text }, result => {
+      if (result?.error) showError("gameError", result.error);
+      else $("chatInput").value = "";
+    });
+  }
+  $("sendBtn").onclick = sendChat;
+  $("chatInput").addEventListener("keydown", e => {
+    if (e.key === "Enter") sendChat();
+  });
+
+  $("guessBtn").onclick = () => {
+    const targetId = $("target").value;
+    const realNameGuess = $("guessInput").value.trim();
+    socket.emit("guess", { targetId, realNameGuess }, result => {
+      if (result?.error) return showError("guessResult", result.error);
+      showError("guessResult", result.correct ? "נכון! קיבלת 10 נקודות 🎉" : "לא נכון. ירדו 2 נקודות.");
+      $("guessInput").value = "";
+    });
+  };
+
+  function render(state) {
+    latestState = state;
+    $("codeDisplay").textContent = state.code;
+    $("status").textContent =
+      state.status === "lobby" ? "ממתינים לשחקנים" :
+      state.status === "playing" ? "המשחק פעיל" : "המשחק הסתיים";
+
+    $("players").innerHTML = "";
+    state.players.forEach(p => {
+      const div = document.createElement("div");
+      div.className = "player";
+      const name = document.createElement("strong");
+      name.textContent = p.alias;
+      const detail = document.createElement("span");
+      detail.className = "muted";
+      detail.textContent = `${p.connected ? "מחובר" : "מנותק"} · ${p.score} נקודות`;
+      div.append(name, detail);
+      $("players").append(div);
+    });
+
+    const isHost = state.hostId === socket.id;
+    $("hostNote").textContent = isHost ? "אתה מנהל החדר." : "מנהל החדר הוא שחקן אחר.";
+    $("startBtn").classList.toggle("hidden", !isHost || state.status !== "lobby");
+    $("revealBtn").classList.toggle("hidden", !isHost || state.status !== "playing");
+    $("playArea").classList.toggle("hidden", state.status !== "playing");
+    $("revealArea").classList.toggle("hidden", state.status !== "finished");
+
+    const target = $("target");
+    const oldTarget = target.value;
+    target.innerHTML = "";
+    state.players.filter(p => p.id !== socket.id).forEach(p => {
+      const option = document.createElement("option");
+      option.value = p.id;
+      option.textContent = p.alias;
+      target.append(option);
+    });
+    if ([...target.options].some(o => o.value === oldTarget)) target.value = oldTarget;
+
+    const chat = $("chat");
+    chat.innerHTML = "";
+    state.messages.forEach(m => {
+      const div = document.createElement("div");
+      div.className = "msg" + (m.system ? " system" : "");
+      if (m.system) {
+        div.textContent = m.text;
+      } else {
+        const b = document.createElement("b");
+        b.textContent = m.alias + ": ";
+        const span = document.createElement("span");
+        span.textContent = m.text;
+        div.append(b, span);
+      }
+      chat.append(div);
+    });
+    chat.scrollTop = chat.scrollHeight;
+
+    if (state.reveal) {
+      $("revealList").innerHTML = "";
+      [...state.reveal].sort((a,b) => b.score - a.score).forEach(p => {
+        const div = document.createElement("div");
+        div.className = "reveal-item";
+        div.textContent = `${p.alias} = ${p.realName} · ${p.score} נקודות`;
+        $("revealList").append(div);
+      });
+    }
+  }
+
+  socket.on("state", render);
+  socket.on("connect", () => {
+    // Refreshing the page creates a new connection; ask players to rejoin with the room code.
+  });
+</script>
+</body>
+</html>
