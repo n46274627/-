@@ -76,9 +76,7 @@ function editDistanceAtMostOne(a, b) {
     }
   }
 
-  if (i < a.length || j < b.length) {
-    edits++;
-  }
+  if (i < a.length || j < b.length) edits++;
 
   return edits <= 1;
 }
@@ -111,6 +109,10 @@ function getPlayer(socket) {
   if (!room) return null;
 
   return room.players.get(socket.data.playerId) || null;
+}
+
+function activePlayers(room) {
+  return [...room.players.values()].filter(player => player.inGame);
 }
 
 function remainingSeconds(room) {
@@ -150,13 +152,19 @@ function createPlayer(browserId, alias, realName) {
     connected: true,
     sockets: new Set(),
 
+    inGame: true,
+    replayStatus: "accepted",
+    replayPrompt: false,
+
     score: 0,
     attempts: new Map(),
     correctTargets: new Set(),
 
     questions: [],
     pendingQuestion: null,
-    knownDetails: []
+    knownDetails: [],
+
+    revealStep: 0
   };
 }
 
@@ -168,31 +176,44 @@ function resetPlayerForNewGame(player) {
   player.questions = [];
   player.pendingQuestion = null;
   player.knownDetails = [];
+  player.revealStep = 0;
+
+  player.inGame = false;
+  player.replayStatus = "pending";
+  player.replayPrompt = true;
 }
 
 function canTarget(guesser, targetId) {
-  if (!guesser) return false;
+  if (!guesser || !guesser.inGame) return false;
   if (guesser.id === targetId) return false;
 
-  if (guesser.correctTargets.has(targetId)) {
-    return false;
-  }
+  const target = guesser.room?.players?.get(targetId);
+  if (target && !target.inGame) return false;
+
+  if (guesser.correctTargets.has(targetId)) return false;
 
   const attempts = guesser.attempts.get(targetId) || 0;
-
   return attempts < 2;
 }
 
-function canAskAbout(asker, targetId) {
-  return canTarget(asker, targetId);
+function canAskAbout(room, asker, targetId) {
+  const target = room.players.get(targetId);
+
+  if (!target || !target.inGame) return false;
+  if (!asker || !asker.inGame) return false;
+  if (asker.id === targetId) return false;
+  if (asker.correctTargets.has(targetId)) return false;
+
+  const attempts = asker.attempts.get(targetId) || 0;
+  return attempts < 2;
 }
 
 function hasAnyGuessOpportunity(room) {
-  const players = [...room.players.values()];
+  const players = activePlayers(room);
 
   for (const guesser of players) {
     for (const target of players) {
-      if (canTarget(guesser, target.id)) {
+      if (canAskAbout(room, guesser, target.id)) {
         return true;
       }
     }
@@ -201,11 +222,25 @@ function hasAnyGuessOpportunity(room) {
   return false;
 }
 
-function addMessage(room, text, system = true, alias = "") {
+// הודעה זמנית בצד המסך, לא הודעה בצ'אט.
+function notifyRoom(room, message, type = "info") {
+  for (const player of room.players.values()) {
+    for (const socketId of player.sockets) {
+      io.to(socketId).emit("gameNotification", {
+        id: createId(),
+        message,
+        type,
+        duration: 8000
+      });
+    }
+  }
+}
+
+function addChatMessage(room, text, alias = "") {
   room.messages.push({
     id: createId(),
     text,
-    system,
+    system: false,
     alias,
     time: Date.now()
   });
@@ -220,21 +255,28 @@ function publicState(room, player) {
     connected: p.connected,
     score: p.score,
     isHost: p.id === room.hostId,
-    identityReady: Boolean(p.realName)
+    identityReady: Boolean(p.realName),
+    inGame: p.inGame,
+    replayStatus: p.replayStatus
   }));
 
   const attempts = {};
   const blockedTargets = [];
 
-  for (const target of room.players.values()) {
+  for (const target of activePlayers(room)) {
     attempts[target.id] = player.attempts.get(target.id) || 0;
 
-    if (!canTarget(player, target.id)) {
+    if (!canAskAbout(room, player, target.id)) {
       blockedTargets.push(target.id);
     }
   }
 
   const finished = room.status === "finished";
+  const active = activePlayers(room);
+
+  const allIdentitiesReady =
+    active.length >= 2 &&
+    active.every(p => Boolean(p.realName));
 
   return {
     code: room.code,
@@ -253,7 +295,7 @@ function publicState(room, player) {
     myId: player.id,
     myScore: player.score,
 
-    // הזהות הסודית נשלחת רק לשחקן שבחר אותה.
+    // הזהות הסודית נשלחת רק לבעליה.
     myRealName: player.realName,
 
     attempts,
@@ -263,7 +305,6 @@ function publicState(room, player) {
     pendingQuestion: player.pendingQuestion,
     knownDetails: player.knownDetails,
 
-    // היסטוריית שאלות ציבורית, ללא זהויות סודיות.
     questionHistory: room.questionHistory.map(question => ({
       id: question.id,
       fromId: question.fromId,
@@ -278,11 +319,12 @@ function publicState(room, player) {
 
     guessLog: finished ? room.guessLog : [],
 
-    revealStep: room.revealStep,
+    // לכל שחקן יש שלב חשיפה אישי.
+    revealStep: player.revealStep,
 
     reveal:
-      finished && room.revealStep > room.guessLog.length
-        ? [...room.players.values()].map(p => ({
+      finished && player.revealStep > room.guessLog.length
+        ? active.map(p => ({
             id: p.id,
             alias: p.alias,
             realName: p.realName,
@@ -290,7 +332,12 @@ function publicState(room, player) {
           }))
         : null,
 
-    finishedReason: room.finishedReason
+    finishedReason: room.finishedReason,
+
+    // נתוני המשחק החוזר.
+    replayPrompt: player.replayPrompt,
+    replayStatus: player.replayStatus,
+    allIdentitiesReady
   };
 }
 
@@ -332,9 +379,7 @@ function removeSocketFromCurrentRoom(socket) {
   if (room.hostId === player.id && !player.connected) {
     const nextHost = [...room.players.values()].find(p => p.connected);
 
-    if (nextHost) {
-      room.hostId = nextHost.id;
-    }
+    if (nextHost) room.hostId = nextHost.id;
   }
 
   if (
@@ -373,12 +418,12 @@ function nextTurn(room) {
     const candidateId = order[room.turnIndex];
     const candidate = room.players.get(candidateId);
 
-    if (!candidate || !candidate.connected) {
+    if (!candidate || !candidate.connected || !candidate.inGame) {
       continue;
     }
 
-    const hasAvailableTarget = [...room.players.values()].some(target =>
-      canAskAbout(candidate, target.id)
+    const hasAvailableTarget = activePlayers(room).some(target =>
+      canAskAbout(room, candidate, target.id)
     );
 
     if (hasAvailableTarget) {
@@ -398,13 +443,17 @@ function finishGame(room, reason) {
   room.status = "finished";
   room.currentTurnId = null;
   room.finishedReason = reason;
-  room.revealStep = 0;
 
-  addMessage(
+  for (const player of activePlayers(room)) {
+    player.revealStep = 0;
+  }
+
+  notifyRoom(
     room,
     reason === "time"
       ? "הזמן נגמר! המשחק הסתיים."
-      : "כל אפשרויות הניחוש נוצלו! המשחק הסתיים."
+      : "כל אפשרויות הניחוש נוצלו! המשחק הסתיים.",
+    "success"
   );
 
   sendState(room);
@@ -412,6 +461,7 @@ function finishGame(room, reason) {
 
 function startNewGameWithSamePlayers(room) {
   room.status = "lobby";
+  room.replayMode = true;
 
   room.messages = [];
   room.questionHistory = [];
@@ -424,14 +474,17 @@ function startNewGameWithSamePlayers(room) {
   room.deadline = null;
 
   room.guessLog = [];
-  room.revealStep = 0;
   room.finishedReason = null;
 
   for (const player of room.players.values()) {
     resetPlayerForNewGame(player);
   }
 
-  addMessage(room, "משחק חדש נפתח! כל שחקן צריך לבחור זהות סודית חדשה.");
+  notifyRoom(
+    room,
+    "המנהל פתח משחק חדש! האם תרצה להשתתף שוב?",
+    "info"
+  );
 
   sendState(room);
 }
@@ -461,6 +514,7 @@ io.on("connection", socket => {
       code,
       hostId: player.id,
       status: "lobby",
+      replayMode: false,
 
       players: new Map([[player.id, player]]),
 
@@ -475,7 +529,6 @@ io.on("connection", socket => {
       deadline: null,
 
       guessLog: [],
-      revealStep: 0,
       finishedReason: null
     };
 
@@ -483,11 +536,7 @@ io.on("connection", socket => {
 
     attachPlayer(socket, room, player);
 
-    callback({
-      ok: true,
-      code
-    });
-
+    callback({ ok: true, code });
     sendState(room);
   });
 
@@ -521,9 +570,9 @@ io.on("connection", socket => {
       });
     }
 
-    if (room.status !== "lobby") {
+    if (room.status !== "lobby" || room.replayMode) {
       return callback({
-        error: "המשחק כבר התחיל. אפשר לחזור רק מאותו דפדפן."
+        error: "המשחק כבר התחיל או שהחדר נמצא בתהליך משחק חוזר."
       });
     }
 
@@ -538,24 +587,17 @@ io.on("connection", socket => {
     );
 
     if (aliasTaken) {
-      return callback({
-        error: "השם הזה כבר תפוס."
-      });
+      return callback({ error: "השם הזה כבר תפוס." });
     }
 
     removeSocketFromCurrentRoom(socket);
 
     const player = createPlayer(browserId, alias, realName);
-
     room.players.set(player.id, player);
 
     attachPlayer(socket, room, player);
 
-    callback({
-      ok: true,
-      code
-    });
-
+    callback({ ok: true, code });
     sendState(room);
   });
 
@@ -576,13 +618,56 @@ io.on("connection", socket => {
     removeSocketFromCurrentRoom(socket);
     attachPlayer(socket, room, player);
 
-    callback({
-      ok: true,
-      code
-    });
+    callback({ ok: true, code });
   });
 
-  // בחירת זהות חדשה במשחק חוזר.
+  // תשובה להזמנה למשחק חוזר.
+  socket.on("answerReplayInvite", (data = {}, callback = () => {}) => {
+    const room = getRoom(socket);
+    const player = getPlayer(socket);
+
+    if (!room || !player || !room.replayMode || room.status !== "lobby") {
+      return callback({ error: "אין הזמנה פעילה למשחק חוזר." });
+    }
+
+    if (player.replayStatus !== "pending") {
+      return callback({ error: "כבר ענית להזמנה הזאת." });
+    }
+
+    if (data.answer === "yes") {
+      player.replayStatus = "accepted";
+      player.inGame = true;
+      player.replayPrompt = false;
+
+      notifyRoom(
+        room,
+        `${player.alias} הצטרף למשחק החדש.`,
+        "info"
+      );
+
+      sendState(room);
+      return callback({ ok: true, accepted: true });
+    }
+
+    if (data.answer === "no") {
+      player.replayStatus = "declined";
+      player.inGame = false;
+      player.replayPrompt = false;
+
+      notifyRoom(
+        room,
+        `${player.alias} לא משתתף במשחק החדש.`,
+        "info"
+      );
+
+      sendState(room);
+      return callback({ ok: true, accepted: false });
+    }
+
+    callback({ error: "תשובה לא תקינה." });
+  });
+
+  // בחירת זהות חדשה.
   socket.on("setNewIdentity", (data = {}, callback = () => {}) => {
     const room = getRoom(socket);
     const player = getPlayer(socket);
@@ -592,8 +677,12 @@ io.on("connection", socket => {
       return callback({ error: "אין חדר פעיל." });
     }
 
-    if (room.status !== "lobby") {
-      return callback({ error: "אפשר לבחור זהות רק לפני תחילת המשחק." });
+    if (room.status !== "lobby" || !room.replayMode) {
+      return callback({ error: "אין כרגע אפשרות לבחור זהות חדשה." });
+    }
+
+    if (!player.inGame || player.replayStatus !== "accepted") {
+      return callback({ error: "לא אישרת השתתפות במשחק החדש." });
     }
 
     if (!realName) {
@@ -603,11 +692,10 @@ io.on("connection", socket => {
     player.realName = realName;
 
     sendState(room);
-
     callback({ ok: true });
   });
 
-  // משחק חדש עם אותם שחקנים.
+  // פתיחת משחק חדש עם אותם משתתפים.
   socket.on("newGameSamePlayers", (callback = () => {}) => {
     const room = getRoom(socket);
     const player = getPlayer(socket);
@@ -625,7 +713,6 @@ io.on("connection", socket => {
     }
 
     startNewGameWithSamePlayers(room);
-
     callback({ ok: true });
   });
 
@@ -646,34 +733,44 @@ io.on("connection", socket => {
       return callback?.({ error: "המשחק כבר התחיל." });
     }
 
-    if (room.players.size < 2) {
-      return callback?.({ error: "צריך לפחות שני שחקנים." });
+    const players = activePlayers(room);
+
+    if (players.length < 2) {
+      return callback?.({ error: "צריך לפחות שני שחקנים שהצטרפו למשחק." });
     }
 
-    const playersWithoutIdentity = [...room.players.values()].filter(
-      p => !p.realName
-    );
-
-    if (playersWithoutIdentity.length > 0) {
+    if (players.some(p => !p.realName)) {
       return callback?.({
-        error: "כל השחקנים צריכים לבחור זהות סודית לפני שמתחילים."
+        error: "כל המשתתפים צריכים לבחור זהות סודית לפני שמתחילים."
       });
     }
 
+    if (room.replayMode) {
+      const unanswered = [...room.players.values()].some(
+        p => p.replayStatus === "pending"
+      );
+
+      if (unanswered) {
+        return callback?.({
+          error: "צריך להמתין שכל השחקנים יענו להזמנה."
+        });
+      }
+    }
+
     room.status = "playing";
+    room.replayMode = false;
     room.deadline = Date.now() + GAME_LENGTH_SECONDS * 1000;
 
-    room.turnOrder = [...room.players.keys()].sort(
-      () => Math.random() - 0.5
-    );
+    room.turnOrder = players
+      .map(p => p.id)
+      .sort(() => Math.random() - 0.5);
 
     room.turnIndex = -1;
     room.round = 1;
 
-    addMessage(room, "המשחק התחיל! בהצלחה לכולם.");
+    notifyRoom(room, "המשחק התחיל! בהצלחה לכולם.", "success");
 
     nextTurn(room);
-
     callback?.({ ok: true });
   });
 
@@ -689,8 +786,8 @@ io.on("connection", socket => {
     const target = room.players.get(data.targetId);
     const questionText = clean(data.question, 240);
 
-    if (!target) {
-      return callback({ error: "השחקן שנבחר לא נמצא." });
+    if (!target || !target.inGame) {
+      return callback({ error: "השחקן שנבחר לא נמצא במשחק." });
     }
 
     if (room.currentTurnId !== player.id) {
@@ -701,10 +798,8 @@ io.on("connection", socket => {
       return callback({ error: "אי אפשר לשאול את עצמך." });
     }
 
-    if (!canAskAbout(player, target.id)) {
-      return callback({
-        error: "כבר אי אפשר לשאול את השחקן הזה."
-      });
+    if (!canAskAbout(room, player, target.id)) {
+      return callback({ error: "כבר אי אפשר לשאול את השחקן הזה." });
     }
 
     if (!questionText) {
@@ -712,9 +807,7 @@ io.on("connection", socket => {
     }
 
     if (player.pendingQuestion) {
-      return callback({
-        error: "כבר יש שאלה שממתינה לתשובה."
-      });
+      return callback({ error: "כבר יש שאלה שממתינה לתשובה." });
     }
 
     const question = {
@@ -735,19 +828,17 @@ io.on("connection", socket => {
 
     target.questions.unshift(question);
     target.pendingQuestion = question;
-
-    // אותה שאלה נשמרת גם בהיסטוריה הציבורית של החדר.
     room.questionHistory.unshift(question);
 
-    addMessage(
+    notifyRoom(
       room,
-      `${player.alias} שאל את ${target.alias}: "${questionText}"`
+      `${player.alias} שאל את ${target.alias}: "${questionText}"`,
+      "question"
     );
 
     room.currentTurnId = null;
 
     sendState(room);
-
     callback({ ok: true });
 
     setTimeout(() => {
@@ -772,9 +863,7 @@ io.on("connection", socket => {
     const question = player.pendingQuestion;
 
     if (!question || question.id !== data.questionId) {
-      return callback({
-        error: "השאלה כבר לא ממתינה לתשובה."
-      });
+      return callback({ error: "השאלה כבר לא ממתינה לתשובה." });
     }
 
     if (data.answer !== "yes" && data.answer !== "no") {
@@ -784,39 +873,30 @@ io.on("connection", socket => {
     question.answer = data.answer;
     question.answeredAt = Date.now();
 
-    const savedQuestion = player.questions.find(
-      q => q.id === question.id
-    );
-
-    if (savedQuestion) {
-      savedQuestion.answer = data.answer;
-      savedQuestion.answeredAt = question.answeredAt;
-    }
-
     if (data.answer === "yes") {
       player.knownDetails.unshift(question.text);
     }
 
-    addMessage(
+    notifyRoom(
       room,
       `${player.alias} ענה ${
         data.answer === "yes" ? "כן" : "לא"
-      } לשאלה של ${question.fromAlias}: "${question.text}"`
+      } לשאלה של ${question.fromAlias}.`,
+      data.answer === "yes" ? "success" : "info"
     );
 
     player.pendingQuestion = null;
 
     sendState(room);
-
     callback({ ok: true });
   });
 
-  // צ'אט ציבורי.
+  // צ'אט ציבורי – רק הודעות שהשחקנים כותבים בעצמם.
   socket.on("chat", (data = {}, callback = () => {}) => {
     const room = getRoom(socket);
     const player = getPlayer(socket);
 
-    if (!room || !player || room.status !== "playing") {
+    if (!room || !player || room.status !== "playing" || !player.inGame) {
       return callback?.({
         error: "אפשר להשתמש בצ'אט בזמן משחק בלבד."
       });
@@ -828,10 +908,9 @@ io.on("connection", socket => {
       return callback?.({ error: "ההודעה ריקה." });
     }
 
-    addMessage(room, message, false, player.alias);
+    addChatMessage(room, message, player.alias);
 
     sendState(room);
-
     callback?.({ ok: true });
   });
 
@@ -840,22 +919,22 @@ io.on("connection", socket => {
     const room = getRoom(socket);
     const player = getPlayer(socket);
 
-    if (!room || !player || room.status !== "playing") {
+    if (!room || !player || room.status !== "playing" || !player.inGame) {
       return callback({ error: "אין משחק פעיל." });
     }
 
     const target = room.players.get(data.targetId);
     const guessText = clean(data.realNameGuess, 48);
 
-    if (!target) {
-      return callback({ error: "השחקן לא נמצא." });
+    if (!target || !target.inGame) {
+      return callback({ error: "השחקן לא נמצא במשחק." });
     }
 
     if (target.id === player.id) {
       return callback({ error: "אי אפשר לנחש את עצמך." });
     }
 
-    if (!canTarget(player, target.id)) {
+    if (!canAskAbout(room, player, target.id)) {
       return callback({
         error: "ניצלת את אפשרויות הניחוש שלך על השחקן הזה."
       });
@@ -870,10 +949,7 @@ io.on("connection", socket => {
 
     player.attempts.set(target.id, attemptNumber);
 
-    const correct = isCorrectGuess(
-      guessText,
-      target.realName
-    );
+    const correct = isCorrectGuess(guessText, target.realName);
 
     const secondsLeft = remainingSeconds(room);
     const points = correct ? calculatePoints(room) : 0;
@@ -904,17 +980,13 @@ io.on("connection", socket => {
 
     room.guessLog.push(record);
 
-    if (correct) {
-      addMessage(
-        room,
-        `${player.alias} הצליח לנחש את ${target.alias}! (+${points} נקודות)`
-      );
-    } else {
-      addMessage(
-        room,
-        `${player.alias} ניסה לנחש את ${target.alias}, אך הניחוש לא הצליח.`
-      );
-    }
+    notifyRoom(
+      room,
+      correct
+        ? `${player.alias} הצליח לנחש את ${target.alias}! (+${points} נקודות)`
+        : `${player.alias} ניסה לנחש את ${target.alias}, אך הניחוש לא הצליח.`,
+      correct ? "success" : "info"
+    );
 
     const attemptsLeft = 2 - attemptNumber;
 
@@ -932,12 +1004,12 @@ io.on("connection", socket => {
     });
   });
 
-  // מעבר בין שלבי החשיפה בסוף המשחק.
+  // מעבר אישי בין שלבי החשיפה.
   socket.on("revealNext", (callback = () => {}) => {
     const room = getRoom(socket);
     const player = getPlayer(socket);
 
-    if (!room || !player || room.status !== "finished") {
+    if (!room || !player || room.status !== "finished" || !player.inGame) {
       return callback?.({
         error: "שלב החשיפה עדיין לא זמין."
       });
@@ -945,10 +1017,11 @@ io.on("connection", socket => {
 
     const maximumStep = room.guessLog.length + 1;
 
-    if (room.revealStep < maximumStep) {
-      room.revealStep++;
+    if (player.revealStep < maximumStep) {
+      player.revealStep++;
     }
 
+    // שליחת מצב מעודכן לכל אחד, עם שלב החשיפה האישי שלו.
     sendState(room);
 
     callback?.({ ok: true });
@@ -972,9 +1045,7 @@ io.on("connection", socket => {
         p => p.connected
       );
 
-      if (nextHost) {
-        room.hostId = nextHost.id;
-      }
+      if (nextHost) room.hostId = nextHost.id;
     }
 
     if (
