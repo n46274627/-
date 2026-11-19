@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
@@ -276,6 +277,7 @@
       border: 1px solid var(--line);
       border-radius: 11px;
       background: #303747;
+      overflow-wrap: anywhere;
     }
 
     .question.yes {
@@ -323,6 +325,43 @@
       height: 1px;
       background: var(--line);
       margin: 18px 0;
+    }
+
+    .identity-card {
+      padding: 15px;
+      border: 1px solid #6658b7;
+      border-radius: 13px;
+      background: #28234c;
+      margin: 12px 0;
+    }
+
+    .identity-value {
+      font-size: 21px;
+      font-weight: bold;
+      color: #d7ceff;
+      margin-top: 8px;
+      overflow-wrap: anywhere;
+    }
+
+    .history-player {
+      padding: 15px;
+      margin: 12px 0;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel2);
+    }
+
+    .history-player h3 {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .history-empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 8px 0;
     }
 
     .overlay {
@@ -420,34 +459,30 @@
       <h2>כניסה למשחק</h2>
 
       <p class="muted">
-        בחר שם בדוי והכנס את הזהות הסודית שלך.
-        הזהות נשארת מוסתרת עד סוף המשחק.
+        בחר שם והכנס את האישיות הסודית שלך.
+        רק אתה תראה את הזהות שבחרת.
       </p>
 
       <div class="row">
         <button class="secondary small" id="instructionsBtn">
           איך משחקים?
         </button>
-
-        <button class="secondary small" id="demoBtn">
-          הדגם לי
-        </button>
       </div>
 
       <div class="grid">
         <div>
-          <label for="realName">השם האמיתי / הזהות הסודית</label>
-          <input
-            id="realName"
-            maxlength="48"
-            placeholder="לדוגמה: דניאל כהן"
-          >
-
-          <label for="alias">השם שיוצג לאחרים</label>
+          <label for="alias">שמך</label>
           <input
             id="alias"
             maxlength="24"
-            placeholder="לדוגמה: הנינג'ה הסגול"
+            placeholder="השם שיוצג לשחקנים"
+          >
+
+          <label for="realName">שם האישיות</label>
+          <input
+            id="realName"
+            maxlength="48"
+            placeholder="האישיות הסודית שלך"
           >
 
           <button id="createBtn" style="margin-top:14px">
@@ -500,6 +535,33 @@
         </div>
 
         <div id="players" class="players"></div>
+
+        <div id="myIdentityCard" class="identity-card hidden">
+          <div class="muted">🔒 האישיות הסודית שבחרת</div>
+          <div id="myIdentityValue" class="identity-value"></div>
+          <div class="section-note">
+            רק אתה יכול לראות את האישיות הזאת במהלך המשחק.
+          </div>
+        </div>
+
+        <div id="newIdentityPanel" class="hidden">
+          <div class="divider"></div>
+          <h3>🎭 בחר את האישיות החדשה שלך</h3>
+
+          <label for="newIdentityInput">שם האישיות</label>
+          <input
+            id="newIdentityInput"
+            maxlength="48"
+            placeholder="כתוב את האישיות הסודית החדשה"
+          >
+
+          <button id="saveIdentityBtn" class="green" style="margin-top:10px">
+            שמירת האישיות
+          </button>
+
+          <div id="identityError" class="error"></div>
+          <div id="identityStatus" class="section-note"></div>
+        </div>
 
         <p id="hostNote" class="muted"></p>
 
@@ -584,13 +646,13 @@
           <select id="guessTarget"></select>
 
           <label for="guessInput">
-            מה הזהות הסודית שלו?
+            מה האישיות הסודית שלו?
           </label>
 
           <input
             id="guessInput"
             maxlength="48"
-            placeholder="כתוב את השם"
+            placeholder="כתוב את שם האישיות"
           >
 
           <button id="guessBtn" style="margin-top:12px">
@@ -598,6 +660,18 @@
           </button>
 
           <div id="guessResult" class="error"></div>
+        </section>
+
+        <!-- היסטוריית שאלות ציבורית -->
+        <section class="panel">
+          <h2>📚 כל השאלות והתשובות</h2>
+
+          <p class="section-note">
+            כל השחקנים רואים כאן את כל השאלות שנשאלו במהלך המשחק.
+            השאלות מסודרות לפי השחקן שעליו נשאלה השאלה.
+          </p>
+
+          <div id="questionHistory"></div>
         </section>
 
         <div class="grid">
@@ -642,6 +716,27 @@
         >
           הבא
         </button>
+
+        <div id="newGameOptions" class="hidden">
+          <div class="divider"></div>
+
+          <h2>🎮 משחק נוסף?</h2>
+
+          <p class="muted">
+            אפשר להישאר עם אותם שחקנים ולבחור זהויות חדשות,
+            או לעבור לחדר חדש עם שחקנים אחרים.
+          </p>
+
+          <button id="samePlayersBtn" class="green">
+            משחק חדש עם אותם שחקנים
+          </button>
+
+          <button id="newRoomBtn" class="secondary" style="margin-top:10px">
+            משחק חדש עם שחקנים חדשים
+          </button>
+
+          <div id="newGameError" class="error"></div>
+        </div>
       </section>
 
     </main>
@@ -673,7 +768,7 @@
     </div>
   </div>
 
-  <!-- חלון הוראות והדגמה -->
+  <!-- חלון הוראות -->
   <div id="infoOverlay" class="overlay hidden">
     <div class="modal">
       <h2 id="infoTitle">איך משחקים?</h2>
@@ -743,26 +838,15 @@
     // הוראות.
     $("instructionsBtn").onclick = () => {
       showInfo("איך משחקים?", `
-        <p>1. כל שחקן בוחר שם בדוי ומכניס זהות סודית.</p>
-        <p>2. המשחק נמשך עד 30 דקות או עד שכל אפשרויות הניחוש נוצלו.</p>
-        <p>3. בכל תור מותר לשאול שחקן אחד שאלה אחת של כן או לא.</p>
-        <p>4. השחקן שקיבל את השאלה עונה בחלון שיופיע אצלו.</p>
-        <p>5. כל תשובה מתפרסמת בצ'אט הציבורי.</p>
-        <p>6. לכל שחקן יש שני ניסיונות לנחש כל שחקן אחר.</p>
-        <p>7. ניחוש נכון מעניק נקודות לפי הזמן שנותר.</p>
-        <p>8. הזהויות נחשפות רק לאחר סיום המשחק.</p>
-      `);
-    };
-
-    // הדגמה.
-    $("demoBtn").onclick = () => {
-      showInfo("הדגמה", `
-        <p><b>דוגמה:</b> דניאל משחק בשם "הנמר".</p>
-        <p>בתור שלו הוא בוחר את "הכוכב" ושואל: "האם אתה אוהב כדורגל?"</p>
-        <p>הכוכב מקבל חלון שאלה ובוחר כן או לא.</p>
-        <p>אם הוא עונה כן, הפרט נשמר אצלו ברשימת הפרטים שגילה.</p>
-        <p>בהמשך דניאל יכול לנסות לנחש את הזהות של הכוכב.</p>
-        <p>אם הוא צודק, הוא מקבל נקודות בהתאם לזמן שנותר במשחק.</p>
+        <p>1. כל שחקן בוחר שם ואישיות סודית.</p>
+        <p>2. רק השחקן עצמו רואה את האישיות שבחר.</p>
+        <p>3. המשחק נמשך עד 30 דקות או עד שכל אפשרויות הניחוש נוצלו.</p>
+        <p>4. בכל תור מותר לשאול שחקן אחד שאלה אחת של כן או לא.</p>
+        <p>5. השחקן שקיבל את השאלה עונה בחלון שיופיע אצלו.</p>
+        <p>6. כל השאלות והתשובות מופיעות לכולם בלוח השאלות.</p>
+        <p>7. לכל שחקן יש שני ניסיונות לנחש כל שחקן אחר.</p>
+        <p>8. ניחוש נכון מעניק נקודות לפי הזמן שנותר.</p>
+        <p>9. הזהויות נחשפות רק בשלב החשיפה בסוף המשחק.</p>
       `);
     };
 
@@ -807,6 +891,30 @@
       );
     };
 
+    // שמירת זהות חדשה במשחק חוזר.
+    $("saveIdentityBtn").onclick = () => {
+      const realName = $("newIdentityInput").value.trim();
+
+      if (!realName) {
+        return setError("identityError", "צריך לכתוב שם אישיות.");
+      }
+
+      socket.emit(
+        "setNewIdentity",
+        { realName },
+        result => {
+          if (result?.error) {
+            return setError("identityError", result.error);
+          }
+
+          $("newIdentityInput").value = "";
+          setError("identityError");
+          $("identityStatus").textContent =
+            "האישיות נשמרה באופן פרטי. אפשר להתחיל כשהזהויות של כולם מוכנות.";
+        }
+      );
+    };
+
     // התחלת משחק.
     $("startBtn").onclick = () => {
       socket.emit("startGame", result => {
@@ -814,6 +922,37 @@
           setError("gameError", result.error);
         }
       });
+    };
+
+    // משחק חדש עם אותם שחקנים.
+    $("samePlayersBtn").onclick = () => {
+      socket.emit("newGameSamePlayers", result => {
+        if (result?.error) {
+          return setError("newGameError", result.error);
+        }
+
+        setError("newGameError");
+      });
+    };
+
+    // מעבר לחדר חדש.
+    $("newRoomBtn").onclick = () => {
+      localStorage.removeItem("mysteryRoom");
+
+      myRoom = "";
+      latestState = null;
+
+      $("game").classList.add("hidden");
+      $("entry").classList.remove("hidden");
+
+      $("realName").value = "";
+      $("alias").value = "";
+      $("roomCode").value = "";
+
+      $("newGameOptions").classList.add("hidden");
+      $("finishedArea").classList.add("hidden");
+
+      setError("entryError");
     };
 
     // צ'אט.
@@ -895,6 +1034,10 @@
     $("guessBtn").onclick = () => {
       const targetId = $("guessTarget").value;
       const realNameGuess = $("guessInput").value.trim();
+
+      if (!targetId) {
+        return setError("guessResult", "אין כרגע שחקן שאפשר לנחש.");
+      }
 
       socket.emit(
         "guess",
@@ -1024,6 +1167,39 @@
       });
     }
 
+    // הצגת הזהות הפרטית של המשתמש.
+    function renderMyIdentity(state) {
+      const hasIdentity = Boolean(state.myRealName);
+
+      $("myIdentityCard").classList.toggle(
+        "hidden",
+        !hasIdentity
+      );
+
+      if (hasIdentity) {
+        $("myIdentityValue").textContent = state.myRealName;
+      }
+
+      const needsIdentity =
+        state.status === "lobby" && !hasIdentity;
+
+      $("newIdentityPanel").classList.toggle(
+        "hidden",
+        !needsIdentity
+      );
+
+      const allReady = state.players.every(
+        player => player.identityReady
+      );
+
+      if (needsIdentity) {
+        $("identityStatus").textContent =
+          allReady
+            ? "כל השחקנים בחרו זהות."
+            : "ממתינים לבחירת הזהויות של השחקנים.";
+      }
+    }
+
     // הצגת הצ'אט.
     function renderChat(state) {
       const chat = $("chat");
@@ -1052,6 +1228,80 @@
       });
 
       chat.scrollTop = chat.scrollHeight;
+    }
+
+    // היסטוריית שאלות ציבורית לפי שחקן יעד.
+    function renderQuestionHistory(state) {
+      const container = $("questionHistory");
+
+      container.innerHTML = "";
+
+      const history = state.questionHistory || [];
+
+      if (!history.length) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = "עדיין לא נשאלו שאלות במשחק.";
+
+        container.append(empty);
+        return;
+      }
+
+      state.players.forEach(target => {
+        const questions = history.filter(
+          question => question.toId === target.id
+        );
+
+        if (!questions.length) return;
+
+        const section = document.createElement("div");
+        section.className = "history-player";
+
+        const heading = document.createElement("h3");
+        heading.textContent = `👤 ${target.alias}`;
+
+        const count = document.createElement("span");
+        count.className = "muted";
+        count.textContent = `${questions.length} שאלות`;
+
+        heading.append(count);
+        section.append(heading);
+
+        questions.forEach(question => {
+          const div = document.createElement("div");
+
+          div.className =
+            "question " +
+            (
+              question.answer === "yes"
+                ? "yes"
+                : question.answer === "no"
+                  ? "no"
+                  : "waiting"
+            );
+
+          const text = document.createElement("strong");
+          text.textContent = question.text;
+
+          const small = document.createElement("small");
+
+          if (question.answer === "yes") {
+            small.textContent =
+              `נשאל על ידי ${question.fromAlias} · תשובה: כן`;
+          } else if (question.answer === "no") {
+            small.textContent =
+              `נשאל על ידי ${question.fromAlias} · תשובה: לא`;
+          } else {
+            small.textContent =
+              `נשאל על ידי ${question.fromAlias} · ממתינים לתשובה`;
+          }
+
+          div.append(text, small);
+          section.append(div);
+        });
+
+        container.append(section);
+      });
     }
 
     // השאלות הפרטיות.
@@ -1239,6 +1489,25 @@
           $("revealContent").append(div);
         });
       }
+
+      $("newGameOptions").classList.toggle(
+        "hidden",
+        step <= guesses.length
+      );
+
+      const isHost = state.hostId === state.myId;
+
+      $("samePlayersBtn").classList.toggle(
+        "hidden",
+        !isHost
+      );
+
+      if (!isHost) {
+        $("newGameError").textContent =
+          "רק מנהל החדר יכול לפתוח משחק חדש עם אותם שחקנים.";
+      } else {
+        $("newGameError").textContent = "";
+      }
     }
 
     // מעבר לשלב החשיפה הבא.
@@ -1270,6 +1539,7 @@
             : "המשחק הסתיים";
 
       renderPlayers(state);
+      renderMyIdentity(state);
 
       const isHost = state.hostId === state.myId;
 
@@ -1282,6 +1552,14 @@
         "hidden",
         !isHost || state.status !== "lobby"
       );
+
+      $("startBtn").disabled =
+        !state.players.every(player => player.identityReady);
+
+      $("startBtn").textContent =
+        state.players.every(player => player.identityReady)
+          ? "התחלת המשחק"
+          : "ממתינים לבחירת הזהויות";
 
       $("playArea").classList.toggle(
         "hidden",
@@ -1314,6 +1592,7 @@
 
         fillTargets(state);
         renderChat(state);
+        renderQuestionHistory(state);
         renderPrivateQuestions(state);
         renderKnownDetails(state);
         renderQuestionPopup(state);
