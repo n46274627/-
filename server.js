@@ -1,4 +1,3 @@
-
 const express = require("express");
 const http = require("http");
 const crypto = require("crypto");
@@ -183,19 +182,6 @@ function resetPlayerForNewGame(player) {
   player.replayPrompt = true;
 }
 
-function canTarget(guesser, targetId) {
-  if (!guesser || !guesser.inGame) return false;
-  if (guesser.id === targetId) return false;
-
-  const target = guesser.room?.players?.get(targetId);
-  if (target && !target.inGame) return false;
-
-  if (guesser.correctTargets.has(targetId)) return false;
-
-  const attempts = guesser.attempts.get(targetId) || 0;
-  return attempts < 2;
-}
-
 function canAskAbout(room, asker, targetId) {
   const target = room.players.get(targetId);
 
@@ -220,6 +206,10 @@ function hasAnyGuessOpportunity(room) {
   }
 
   return false;
+}
+
+function hasUnansweredQuestion(room) {
+  return room.questionHistory.some(question => question.answer === null);
 }
 
 // הודעה זמנית בצד המסך, לא הודעה בצ'אט.
@@ -295,7 +285,6 @@ function publicState(room, player) {
     myId: player.id,
     myScore: player.score,
 
-    // הזהות הסודית נשלחת רק לבעליה.
     myRealName: player.realName,
 
     attempts,
@@ -319,7 +308,6 @@ function publicState(room, player) {
 
     guessLog: finished ? room.guessLog : [],
 
-    // לכל שחקן יש שלב חשיפה אישי.
     revealStep: player.revealStep,
 
     reveal:
@@ -334,7 +322,6 @@ function publicState(room, player) {
 
     finishedReason: room.finishedReason,
 
-    // נתוני המשחק החוזר.
     replayPrompt: player.replayPrompt,
     replayStatus: player.replayStatus,
     allIdentitiesReady
@@ -357,6 +344,15 @@ function attachPlayer(socket, room, player) {
   socket.data.playerId = player.id;
 
   socket.join(room.code);
+
+  // אם המשחק ממתין לתור בגלל ניתוק, ננסה לבחור שחקן.
+  if (
+    room.status === "playing" &&
+    room.currentTurnId === null &&
+    !hasUnansweredQuestion(room)
+  ) {
+    nextTurn(room);
+  }
 
   sendState(room);
 }
@@ -396,8 +392,15 @@ function removeSocketFromCurrentRoom(socket) {
   sendState(room);
 }
 
+// בחירת התור הבא.
 function nextTurn(room) {
   if (room.status !== "playing") return;
+
+  // לא מעבירים תור כשעדיין ממתינים לתשובה.
+  if (hasUnansweredQuestion(room)) {
+    sendState(room);
+    return;
+  }
 
   const order = room.turnOrder;
 
@@ -407,6 +410,7 @@ function nextTurn(room) {
     return;
   }
 
+  // מחפשים את השחקן הבא שיכול לבצע פעולה.
   for (let i = 0; i < order.length; i++) {
     room.turnIndex++;
 
@@ -433,6 +437,8 @@ function nextTurn(room) {
     }
   }
 
+  // אין כרגע שחקן מחובר שיכול לשחק.
+  // נשאיר את התור ריק וננסה שוב כשמישהו יתחבר.
   room.currentTurnId = null;
   sendState(room);
 }
@@ -736,7 +742,9 @@ io.on("connection", socket => {
     const players = activePlayers(room);
 
     if (players.length < 2) {
-      return callback?.({ error: "צריך לפחות שני שחקנים שהצטרפו למשחק." });
+      return callback?.({
+        error: "צריך לפחות שני שחקנים שהצטרפו למשחק."
+      });
     }
 
     if (players.some(p => !p.realName)) {
@@ -767,6 +775,7 @@ io.on("connection", socket => {
 
     room.turnIndex = -1;
     room.round = 1;
+    room.currentTurnId = null;
 
     notifyRoom(room, "המשחק התחיל! בהצלחה לכולם.", "success");
 
@@ -806,8 +815,11 @@ io.on("connection", socket => {
       return callback({ error: "צריך לכתוב שאלה." });
     }
 
-    if (player.pendingQuestion) {
-      return callback({ error: "כבר יש שאלה שממתינה לתשובה." });
+    // מונע פתיחת כמה שאלות לפני שהקודמת נענתה.
+    if (hasUnansweredQuestion(room)) {
+      return callback({
+        error: "צריך להמתין לתשובה על השאלה הקודמת."
+      });
     }
 
     const question = {
@@ -836,19 +848,9 @@ io.on("connection", socket => {
       "question"
     );
 
-    room.currentTurnId = null;
-
+    // התור נשאר אצל השואל עד שהנשאל עונה.
     sendState(room);
     callback({ ok: true });
-
-    setTimeout(() => {
-      if (
-        room.status === "playing" &&
-        room.currentTurnId === null
-      ) {
-        nextTurn(room);
-      }
-    }, 300);
   });
 
   // תשובה לשאלה שהתקבלה.
@@ -889,6 +891,9 @@ io.on("connection", socket => {
 
     sendState(room);
     callback({ ok: true });
+
+    // רק עכשיו עוברים לשחקן הבא.
+    nextTurn(room);
   });
 
   // צ'אט ציבורי – רק הודעות שהשחקנים כותבים בעצמם.
@@ -921,6 +926,16 @@ io.on("connection", socket => {
 
     if (!room || !player || room.status !== "playing" || !player.inGame) {
       return callback({ error: "אין משחק פעיל." });
+    }
+
+    if (room.currentTurnId !== player.id) {
+      return callback({ error: "זה לא התור שלך." });
+    }
+
+    if (hasUnansweredQuestion(room)) {
+      return callback({
+        error: "צריך להמתין לתשובה על השאלה הפתוחה לפני שמנחשים."
+      });
     }
 
     const target = room.players.get(data.targetId);
@@ -993,7 +1008,8 @@ io.on("connection", socket => {
     if (!hasAnyGuessOpportunity(room)) {
       finishGame(room, "guesses");
     } else {
-      sendState(room);
+      // אחרי ניחוש, נכון או לא נכון, עוברים לשחקן הבא.
+      nextTurn(room);
     }
 
     callback({
@@ -1021,7 +1037,6 @@ io.on("connection", socket => {
       player.revealStep++;
     }
 
-    // שליחת מצב מעודכן לכל אחד, עם שלב החשיפה האישי שלו.
     sendState(room);
 
     callback?.({ ok: true });
