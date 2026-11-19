@@ -1,8 +1,8 @@
 {
   "name": "identity-mystery-game",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "A real-time multiplayer identity guessing party game",
+  "description": "Real-time multiplayer identity guessing game",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
