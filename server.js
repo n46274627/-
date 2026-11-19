@@ -1,3 +1,4 @@
+
 const express = require("express");
 const http = require("http");
 const crypto = require("crypto");
@@ -95,8 +96,6 @@ function isCorrectGuess(guess, secretName) {
     return false;
   }
 
-  // אם הזהות מורכבת משתי מילים, גם מילה אחת יכולה להספיק.
-  // מתקבלת גם טעות של אות אחת: הוספה, מחיקה או החלפה.
   return secretWords.some(word =>
     editDistanceAtMostOne(normalizedGuess, word)
   );
@@ -139,7 +138,6 @@ function calculatePoints(room) {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
 
-  // לדוגמה: 15:20 = 1520 נקודות.
   return minutes * 100 + rest;
 }
 
@@ -153,22 +151,23 @@ function createPlayer(browserId, alias, realName) {
     sockets: new Set(),
 
     score: 0,
-
-    // מספר הניסיונות של השחקן מול כל יעד.
     attempts: new Map(),
-
-    // יעדים שהשחקן כבר ניחש נכון.
     correctTargets: new Set(),
 
-    // שאלות פרטיות שקיבל השחקן.
     questions: [],
-
-    // שאלה שממתינה כרגע לתשובה.
     pendingQuestion: null,
-
-    // כל התשובות החיוביות שקיבל.
     knownDetails: []
   };
+}
+
+function resetPlayerForNewGame(player) {
+  player.realName = "";
+  player.score = 0;
+  player.attempts = new Map();
+  player.correctTargets = new Set();
+  player.questions = [];
+  player.pendingQuestion = null;
+  player.knownDetails = [];
 }
 
 function canTarget(guesser, targetId) {
@@ -220,7 +219,8 @@ function publicState(room, player) {
     alias: p.alias,
     connected: p.connected,
     score: p.score,
-    isHost: p.id === room.hostId
+    isHost: p.id === room.hostId,
+    identityReady: Boolean(p.realName)
   }));
 
   const attempts = {};
@@ -253,6 +253,9 @@ function publicState(room, player) {
     myId: player.id,
     myScore: player.score,
 
+    // הזהות הסודית נשלחת רק לשחקן שבחר אותה.
+    myRealName: player.realName,
+
     attempts,
     blockedTargets,
 
@@ -260,12 +263,23 @@ function publicState(room, player) {
     pendingQuestion: player.pendingQuestion,
     knownDetails: player.knownDetails,
 
-    // הניחושים נשלחים רק לאחר סיום המשחק.
+    // היסטוריית שאלות ציבורית, ללא זהויות סודיות.
+    questionHistory: room.questionHistory.map(question => ({
+      id: question.id,
+      fromId: question.fromId,
+      fromAlias: question.fromAlias,
+      toId: question.toId,
+      toAlias: question.toAlias,
+      text: question.text,
+      answer: question.answer,
+      time: question.time,
+      answeredAt: question.answeredAt
+    })),
+
     guessLog: finished ? room.guessLog : [],
 
     revealStep: room.revealStep,
 
-    // הזהויות נשלחות רק לאחר שכל הניחושים נחשפו.
     reveal:
       finished && room.revealStep > room.guessLog.length
         ? [...room.players.values()].map(p => ({
@@ -315,10 +329,7 @@ function removeSocketFromCurrentRoom(socket) {
 
   socket.leave(room.code);
 
-  if (
-    room.hostId === player.id &&
-    !player.connected
-  ) {
+  if (room.hostId === player.id && !player.connected) {
     const nextHost = [...room.players.values()].find(p => p.connected);
 
     if (nextHost) {
@@ -377,8 +388,6 @@ function nextTurn(room) {
     }
   }
 
-  // אין כרגע שחקן שיכול לשאול שאלה.
-  // הניחושים עדיין יכולים להימשך.
   room.currentTurnId = null;
   sendState(room);
 }
@@ -389,8 +398,6 @@ function finishGame(room, reason) {
   room.status = "finished";
   room.currentTurnId = null;
   room.finishedReason = reason;
-
-  // מתחילים את שלב החשיפה מהניחוש הראשון.
   room.revealStep = 0;
 
   addMessage(
@@ -399,6 +406,32 @@ function finishGame(room, reason) {
       ? "הזמן נגמר! המשחק הסתיים."
       : "כל אפשרויות הניחוש נוצלו! המשחק הסתיים."
   );
+
+  sendState(room);
+}
+
+function startNewGameWithSamePlayers(room) {
+  room.status = "lobby";
+
+  room.messages = [];
+  room.questionHistory = [];
+
+  room.turnOrder = [];
+  room.turnIndex = -1;
+  room.currentTurnId = null;
+  room.round = 0;
+
+  room.deadline = null;
+
+  room.guessLog = [];
+  room.revealStep = 0;
+  room.finishedReason = null;
+
+  for (const player of room.players.values()) {
+    resetPlayerForNewGame(player);
+  }
+
+  addMessage(room, "משחק חדש נפתח! כל שחקן צריך לבחור זהות סודית חדשה.");
 
   sendState(room);
 }
@@ -415,7 +448,7 @@ io.on("connection", socket => {
 
     if (!alias || !realName || !browserId) {
       return callback({
-        error: "צריך למלא שם בדוי, זהות סודית ומזהה דפדפן."
+        error: "צריך למלא שם, זהות סודית ומזהה דפדפן."
       });
     }
 
@@ -432,6 +465,7 @@ io.on("connection", socket => {
       players: new Map([[player.id, player]]),
 
       messages: [],
+      questionHistory: [],
 
       turnOrder: [],
       turnIndex: -1,
@@ -474,7 +508,6 @@ io.on("connection", socket => {
       return callback({ error: "צריך למלא את כל הפרטים." });
     }
 
-    // אם אותו דפדפן כבר נמצא בחדר, משחזרים את השחקן.
     const existingPlayer = room.players.get(browserId);
 
     if (existingPlayer) {
@@ -506,7 +539,7 @@ io.on("connection", socket => {
 
     if (aliasTaken) {
       return callback({
-        error: "השם הבדוי הזה כבר תפוס."
+        error: "השם הזה כבר תפוס."
       });
     }
 
@@ -549,8 +582,55 @@ io.on("connection", socket => {
     });
   });
 
+  // בחירת זהות חדשה במשחק חוזר.
+  socket.on("setNewIdentity", (data = {}, callback = () => {}) => {
+    const room = getRoom(socket);
+    const player = getPlayer(socket);
+    const realName = clean(data.realName, 48);
+
+    if (!room || !player) {
+      return callback({ error: "אין חדר פעיל." });
+    }
+
+    if (room.status !== "lobby") {
+      return callback({ error: "אפשר לבחור זהות רק לפני תחילת המשחק." });
+    }
+
+    if (!realName) {
+      return callback({ error: "צריך לכתוב שם אישיות." });
+    }
+
+    player.realName = realName;
+
+    sendState(room);
+
+    callback({ ok: true });
+  });
+
+  // משחק חדש עם אותם שחקנים.
+  socket.on("newGameSamePlayers", (callback = () => {}) => {
+    const room = getRoom(socket);
+    const player = getPlayer(socket);
+
+    if (!room || !player) {
+      return callback({ error: "אין חדר פעיל." });
+    }
+
+    if (room.status !== "finished") {
+      return callback({ error: "אפשר לפתוח משחק חדש רק אחרי סיום המשחק." });
+    }
+
+    if (room.hostId !== player.id) {
+      return callback({ error: "רק מנהל החדר יכול לפתוח משחק חדש." });
+    }
+
+    startNewGameWithSamePlayers(room);
+
+    callback({ ok: true });
+  });
+
   // התחלת משחק.
-  socket.on("startGame", callback => {
+  socket.on("startGame", (callback = () => {}) => {
     const room = getRoom(socket);
     const player = getPlayer(socket);
 
@@ -570,11 +650,19 @@ io.on("connection", socket => {
       return callback?.({ error: "צריך לפחות שני שחקנים." });
     }
 
-    room.status = "playing";
-    room.deadline =
-      Date.now() + GAME_LENGTH_SECONDS * 1000;
+    const playersWithoutIdentity = [...room.players.values()].filter(
+      p => !p.realName
+    );
 
-    // סדר תורות אקראי בכל משחק.
+    if (playersWithoutIdentity.length > 0) {
+      return callback?.({
+        error: "כל השחקנים צריכים לבחור זהות סודית לפני שמתחילים."
+      });
+    }
+
+    room.status = "playing";
+    room.deadline = Date.now() + GAME_LENGTH_SECONDS * 1000;
+
     room.turnOrder = [...room.players.keys()].sort(
       () => Math.random() - 0.5
     );
@@ -648,19 +736,20 @@ io.on("connection", socket => {
     target.questions.unshift(question);
     target.pendingQuestion = question;
 
+    // אותה שאלה נשמרת גם בהיסטוריה הציבורית של החדר.
+    room.questionHistory.unshift(question);
+
     addMessage(
       room,
       `${player.alias} שאל את ${target.alias}: "${questionText}"`
     );
 
-    // השאלה נשלחה והתור הסתיים.
     room.currentTurnId = null;
 
     sendState(room);
 
     callback({ ok: true });
 
-    // מעבירים את התור לשחקן הבא.
     setTimeout(() => {
       if (
         room.status === "playing" &&
@@ -844,7 +933,7 @@ io.on("connection", socket => {
   });
 
   // מעבר בין שלבי החשיפה בסוף המשחק.
-  socket.on("revealNext", callback => {
+  socket.on("revealNext", (callback = () => {}) => {
     const room = getRoom(socket);
     const player = getPlayer(socket);
 
